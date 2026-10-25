@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>BTC Direction Lab</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0b0f14;color:#eef2f7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.wrap{max-width:520px;margin:auto;padding:18px 14px 32px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+h1{font-size:22px;margin:0}.pill{font-size:12px;padding:7px 10px;border-radius:999px;background:#151c25;color:#9fb0c3}
+.card{background:#111821;border:1px solid #202b37;border-radius:18px;padding:18px;margin:12px 0;box-shadow:0 8px 30px #0003}
+.price{font-size:34px;font-weight:750;margin:5px 0}.muted{color:#91a0b0;font-size:13px}
+.signal{font-size:38px;font-weight:800;margin:12px 0 4px}.up{color:#58d68d}.down{color:#ff7474}.flat{color:#c9d1da}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.stat{background:#0c1219;border-radius:13px;padding:12px}.label{font-size:12px;color:#8796a6}.val{font-size:19px;font-weight:700;margin-top:4px}
+.bar{height:9px;background:#202a35;border-radius:99px;overflow:hidden;margin-top:10px}.fill{height:100%;width:0;background:#79a7ff;transition:width .4s}
+button{width:100%;border:0;border-radius:13px;padding:14px;background:#eaf1f8;color:#0b0f14;font-weight:750;font-size:16px;margin-top:10px}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;padding:9px 4px;border-bottom:1px solid #202a35}th{color:#8796a6}
+.win{color:#58d68d}.loss{color:#ff7474}.warn{background:#18130c;border-color:#45341c;color:#d9b878}
+.small{font-size:11px;color:#718091;line-height:1.5}.center{text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><h1>BTC Direction Lab</h1><div class="pill">PAPER ONLY</div></div>
+
+  <div class="card">
+    <div class="muted">BTC / USD</div>
+    <div id="price" class="price">Loading…</div>
+    <div id="updated" class="muted">Connecting to market data…</div>
+  </div>
+
+  <div class="card center">
+    <div class="muted">10-minute direction model</div>
+    <div id="signal" class="signal flat">WAIT</div>
+    <div id="confidence" class="muted">Building signal…</div>
+    <div class="bar"><div id="fill" class="fill"></div></div>
+  </div>
+
+  <div class="grid">
+    <div class="stat"><div class="label">Paper size</div><div class="val">$15</div></div>
+    <div class="stat"><div class="label">Model record</div><div class="val" id="record">0–0</div></div>
+    <div class="stat"><div class="label">Accuracy</div><div class="val" id="accuracy">—</div></div>
+    <div class="stat"><div class="label">Momentum</div><div class="val" id="momentum">—</div></div>
+  </div>
+
+  <div class="card">
+    <div class="muted">Latest prediction</div>
+    <div id="details" style="margin-top:8px">Waiting for enough candles…</div>
+    <button id="newBtn">Refresh signal</button>
+  </div>
+
+  <div class="card">
+    <div class="muted">Prediction history</div>
+    <table><thead><tr><th>Time</th><th>Call</th><th>Confidence</th><th>Result</th></tr></thead>
+    <tbody id="history"><tr><td colspan="4" class="center muted">No completed predictions yet</td></tr></tbody></table>
+  </div>
+
+  <div class="card warn">
+    <b>Important</b>
+    <div class="small" style="margin-top:6px">This is a research/paper-trading model, not financial advice. Short-term BTC direction is highly uncertain. Confidence is a model score, not a probability guarantee. The page never places trades or sends orders.</div>
+  </div>
+</div>
+
+<script>
+const APIS=[
+  "https://api.coinbase.com/v2/prices/BTC-USD/spot",
+  "https://api.kraken.com/0/public/Ticker?pair=XBTUSD"
+];
+let candles=[], current=null, history=JSON.parse(localStorage.getItem("btcLabHistory")||"[]");
+
+const $=id=>document.getElementById(id);
+function fmt(n){return "$"+Number(n).toLocaleString(undefined,{maximumFractionDigits:2})}
+function mean(a){return a.reduce((x,y)=>x+y,0)/a.length}
+function pct(a,b){return (a/b-1)*100}
+
+async function load(){
+  try{
+    // Try the primary source first. If it is unavailable, use a fallback spot feed.
+    let spot=null;
+    for(const api of APIS){
+      try{
+        const r=await fetch(api,{cache:"no-store"});
+        if(!r.ok) continue;
+        const d=await r.json();
+        if(api.includes("coinbase")) spot=+d.data.amount;
+        else spot=+d.result.XXBTZUSD.c[0];
+        if(Number.isFinite(spot)) break;
+      }catch(e){}
+    }
+    if(!Number.isFinite(spot)) throw Error();
+
+    // Keep a short local price history so the mobile page can still produce
+    // a transparent momentum signal even when candle history is unavailable.
+    const saved=JSON.parse(localStorage.getItem("btcLabPrices")||"[]");
+    const now=Date.now();
+    saved.push({t:now,c:spot,v:0});
+    candles=saved.filter(x=>now-x.t<2*60*60*1000).slice(-120);
+    localStorage.setItem("btcLabPrices",JSON.stringify(candles));
+
+    $("price").textContent=fmt(spot);
+    $("updated").textContent="Live BTC price • "+new Date().toLocaleTimeString();
+    makeSignal();
+    settle();
+    $("price").textContent=fmt(candles.at(-1).c);
+    $("updated").textContent="Updated "+new Date().toLocaleTimeString();
+    makeSignal();
+    settle();
+  }catch(e){
+    $("price").textContent="Unavailable";
+    $("updated").textContent="Could not load public BTC data";
+  }
+}
+function ema(arr,n){
+  let k=2/(n+1), e=arr[0];
+  for(let i=1;i<arr.length;i++) e=arr[i]*k+e*(1-k);
+  return e;
+}
+function makeSignal(){
+  if(candles.length<3){
+    $("signal").textContent="COLLECTING";
+    $("signal").className="signal flat";
+    $("confidence").textContent="Collecting a few live price points…";
+    $("fill").style.width="0%";
+    $("momentum").textContent="—";
+    $("details").textContent="The live feed is connected. Give it a few seconds to build a short-term history.";
+    return;
+  }
+  const c=candles.map(x=>x.c), last=c.at(-1);
+  const e9=ema(c.slice(-Math.min(30,c.length)),Math.min(9,c.length));
+  const e21=ema(c.slice(-Math.min(30,c.length)),Math.min(21,c.length));
+  const i5=Math.max(0,c.length-6), i15=Math.max(0,c.length-16);
+  const r5=pct(last,c[i5]), r15=pct(last,c[i15]);
+  const vol=mean(candles.slice(-20).map(x=>x.v));
+  const volNow=mean(candles.slice(-3).map(x=>x.v));
+  let score=0;
+  score += Math.max(-1.5,Math.min(1.5,(e9/e21-1)*100*8));
+  score += Math.max(-1.5,Math.min(1.5,r5*0.7));
+  score += Math.max(-1.5,Math.min(1.5,r15*0.35));
+  if(volNow>vol*1.15) score*=1.12;
+  const dir=score>0.18?"UP":score<-0.18?"DOWN":"WAIT";
+  const conf=Math.round(Math.min(92,52+Math.abs(score)*13));
+  current={time:Date.now(),price:last,dir,conf,score};
+  $("signal").textContent=dir==="UP"?"📈 UP":dir==="DOWN"?"📉 DOWN":"WAIT";
+  $("signal").className="signal "+(dir==="UP"?"up":dir==="DOWN"?"down":"flat");
+  $("confidence").textContent=dir==="WAIT"?"No strong edge":"Model score: "+conf+"%";
+  $("fill").style.width=(dir==="WAIT"?0:conf)+"%";
+  $("momentum").textContent=(r5>=0?"+":"")+r5.toFixed(2)+"% / 5m";
+  $("details").innerHTML=dir==="WAIT"?
+    "Momentum is mixed. The model is staying out rather than forcing a call.":
+    `<b>${dir}</b> for the next 10 minutes at ${fmt(last)}.<br><span class="muted">EMA trend + short momentum + volume filter.</span>`;
+}
+function settle(){
+  // A prediction is settled after 10 minutes using the next available current price.
+  const now=Date.now();
+  history=history.filter(x=>now-x.time<7*24*3600e3);
+  for(const x of history){
+    if(!x.result && now-x.time>=10*60e3 && candles.length){
+      const p=candles.at(-1).c;
+      x.result=(x.dir==="UP"?p>x.price:p<x.price)?"WIN":"LOSS";
+      x.exit=p;
+    }
+  }
+  localStorage.setItem("btcLabHistory",JSON.stringify(history));
+  renderHistory();
+}
+function savePrediction(){
+  if(!current || current.dir==="WAIT")return;
+  history.unshift({...current,result:null});
+  history=history.slice(0,100);
+  localStorage.setItem("btcLabHistory",JSON.stringify(history));
+  renderHistory();
+}
+function renderHistory(){
+  const done=history.filter(x=>x.result), wins=done.filter(x=>x.result==="WIN").length;
+  $("record").textContent=wins+"–"+(done.length-wins);
+  $("accuracy").textContent=done.length?Math.round(wins/done.length*100)+"%":"—";
+  $("history").innerHTML=history.length?history.slice(0,12).map(x=>
+    `<tr><td>${new Date(x.time).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</td>
+     <td>${x.dir}</td><td>${x.conf}%</td>
+     <td class="${x.result==="WIN"?"win":x.result==="LOSS"?"loss":""}">${x.result||"pending"}</td></tr>`).join("")
+    :'<tr><td colspan="4" class="center muted">No completed predictions yet</td></tr>';
+}
+$("newBtn").onclick=()=>{makeSignal();savePrediction()};
+load(); renderHistory();
+setInterval(load,15000);
+setInterval(settle,15000);
+</script>
+</body>
+</html>
