@@ -22,7 +22,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;p
 </head>
 <body>
 <div class="wrap">
-  <div class="top"><h1>BTC Direction Lab</h1><div class="pill">PAPER ONLY</div></div>
+  <div class="top"><h1>BTC Direction Lab</h1><div class="pill">PAPER SHIT</div></div>
 
   <div class="card">
     <div class="muted">BTC / USD</div>
@@ -31,7 +31,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;p
   </div>
 
   <div class="card center">
-    <div class="muted">10-minute direction model</div>
+    <div class="muted">15-minute direction model</div>
     <div id="signal" class="signal flat">WAIT</div>
     <div id="confidence" class="muted">Building signal…</div>
     <div class="bar"><div id="fill" class="fill"></div></div>
@@ -148,14 +148,14 @@ function makeSignal(){
   $("momentum").textContent=(r5>=0?"+":"")+r5.toFixed(2)+"% / 5m";
   $("details").innerHTML=dir==="WAIT"?
     "Momentum is mixed. The model is staying out rather than forcing a call.":
-    `<b>${dir}</b> for the next 10 minutes at ${fmt(last)}.<br><span class="muted">EMA trend + short momentum + volume filter.</span>`;
+    `<b>${dir}</b> for the next 15 minutes at ${fmt(last)}.<br><span class="muted">EMA trend + short momentum + volume filter.</span>`;
 }
 function settle(){
-  // A prediction is settled after 10 minutes using the next available current price.
+  // A prediction is settled after 15 minutes using the next available current price.
   const now=Date.now();
   history=history.filter(x=>now-x.time<7*24*3600e3);
   for(const x of history){
-    if(!x.result && now-x.time>=10*60e3 && candles.length){
+    if(!x.result && now-x.time>=15*60e3 && candles.length){
       const p=candles.at(-1).c;
       x.result=(x.dir==="UP"?p>x.price:p<x.price)?"WIN":"LOSS";
       x.exit=p;
